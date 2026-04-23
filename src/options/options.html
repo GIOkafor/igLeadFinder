@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>igLeadFinder – Options</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 14px;
+      color: #1a1a2e;
+      background: #f8f9fa;
+      padding: 40px;
+      max-width: 600px;
+    }
+
+    h1 {
+      font-size: 22px;
+      font-weight: 700;
+      margin-bottom: 4px;
+      background: linear-gradient(90deg, #833ab4, #fd1d1d);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .subtitle {
+      color: #6c757d;
+      font-size: 13px;
+      margin-bottom: 32px;
+    }
+
+    .card {
+      background: #fff;
+      border: 1px solid #e1e4e8;
+      border-radius: 10px;
+      padding: 20px 24px;
+      margin-bottom: 20px;
+    }
+
+    .card h2 {
+      font-size: 15px;
+      font-weight: 700;
+      margin-bottom: 16px;
+      color: #1a1a2e;
+    }
+
+    .field { margin-bottom: 16px; }
+    .field:last-child { margin-bottom: 0; }
+
+    label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      color: #6c757d;
+      margin-bottom: 5px;
+    }
+
+    .field-desc {
+      font-size: 12px;
+      color: #adb5bd;
+      margin-top: 4px;
+    }
+
+    input[type="number"],
+    select {
+      width: 100%;
+      padding: 8px 12px;
+      border: 1px solid #e1e4e8;
+      border-radius: 8px;
+      font-size: 13px;
+      background: #fff;
+      outline: none;
+    }
+
+    input[type="number"]:focus,
+    select:focus { border-color: #e1306c; box-shadow: 0 0 0 2px rgba(225,48,108,.15); }
+
+    .warning {
+      background: #fff3cd;
+      border: 1px solid #ffc107;
+      border-radius: 8px;
+      padding: 12px 16px;
+      font-size: 12.5px;
+      color: #664d03;
+      margin-bottom: 20px;
+      line-height: 1.5;
+    }
+
+    .btn-row { display: flex; gap: 10px; margin-top: 24px; }
+
+    .btn {
+      padding: 9px 20px;
+      border: none;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .btn-primary { background: #e1306c; color: #fff; }
+    .btn-primary:hover { background: #c1215c; }
+
+    .btn-ghost {
+      background: transparent;
+      color: #dc3545;
+      border: 1px solid #dc3545;
+    }
+    .btn-ghost:hover { background: #dc3545; color: #fff; }
+
+    #save-status {
+      font-size: 12px;
+      color: #198754;
+      display: none;
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+  <h1>igLeadFinder</h1>
+  <p class="subtitle">Options &amp; Settings</p>
+
+  <div class="warning">
+    <strong>Reminder:</strong> This extension uses Instagram's internal APIs within your
+    logged-in browser session. Keep request speeds conservative to reduce account risk.
+    You are solely responsible for how you use this tool.
+  </div>
+
+  <div class="card">
+    <h2>Rate Limiting</h2>
+
+    <div class="field">
+      <label for="default-delay">Default Request Speed</label>
+      <select id="default-delay">
+        <option value="conservative">Conservative (3–8 s per profile) – Recommended</option>
+        <option value="normal" selected>Normal (2–5 s per profile)</option>
+        <option value="fast">Fast (1–3 s per profile) – Higher risk</option>
+      </select>
+      <p class="field-desc">Time waited between fetching individual follower profiles.</p>
+    </div>
+
+    <div class="field">
+      <label for="daily-limit">Daily Scrape Limit (profiles)</label>
+      <input type="number" id="daily-limit" value="300" min="10" max="1000">
+      <p class="field-desc">
+        Maximum profiles inspected per day across all sessions.
+        Staying under 300–500/day significantly reduces risk.
+      </p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Defaults</h2>
+
+    <div class="field">
+      <label for="default-max-leads">Default Max Leads per Job</label>
+      <input type="number" id="default-max-leads" value="100" min="1" max="500">
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Data</h2>
+
+    <div class="field">
+      <p style="font-size:13px;color:#495057;margin-bottom:8px;">
+        All scraped leads are stored locally in your browser via
+        <code>chrome.storage.local</code>. No data is sent to any external server.
+      </p>
+      <button id="clear-data-btn" class="btn btn-ghost">Clear All Stored Leads</button>
+    </div>
+  </div>
+
+  <div class="btn-row">
+    <button id="save-btn" class="btn btn-primary">Save Settings</button>
+  </div>
+  <div id="save-status">Settings saved!</div>
+
+  <script src="options.js"></script>
+</body>
+</html>

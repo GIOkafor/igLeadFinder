@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "igLeadFinder",
+  "version": "1.0.0",
+  "description": "Find and filter Instagram followers by bio keywords. Filters out private accounts.",
+  "permissions": [
+    "storage",
+    "tabs",
+    "scripting"
+  ],
+  "host_permissions": [
+    "*://*.instagram.com/*"
+  ],
+  "background": {
+    "service_worker": "src/background/background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*.instagram.com/*"],
+      "js": ["src/content/content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "src/popup/popup.html",
+    "default_title": "igLeadFinder"
+  },
+  "options_page": "src/options/options.html",
+  "web_accessible_resources": [
+    {
+      "resources": ["src/content/content.js"],
+      "matches": ["*://*.instagram.com/*"]
+    }
+  ]
+}

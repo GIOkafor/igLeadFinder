@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>igLeadFinder</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div id="app">
+
+    <header>
+      <div class="logo">
+        <span class="logo-icon">&#128269;</span>
+        <span class="logo-text">igLeadFinder</span>
+      </div>
+    </header>
+
+    <!-- Config Form -->
+    <section id="config-section">
+      <div class="field">
+        <label for="target-username">Target Account</label>
+        <input
+          type="text"
+          id="target-username"
+          placeholder="username (no @)"
+          autocomplete="off"
+          spellcheck="false"
+        >
+      </div>
+
+      <div class="field">
+        <label for="keywords">
+          Bio Keywords
+          <span class="hint">comma-separated, leave blank for all</span>
+        </label>
+        <input
+          type="text"
+          id="keywords"
+          placeholder="coach, founder, CEO"
+          autocomplete="off"
+        >
+      </div>
+
+      <div class="field-row">
+        <div class="field">
+          <label for="max-leads">Max Leads</label>
+          <input type="number" id="max-leads" value="100" min="1" max="500">
+        </div>
+        <div class="field">
+          <label for="delay-profile">Request Speed</label>
+          <select id="delay-profile">
+            <option value="conservative">Conservative (3–8 s)</option>
+            <option value="normal" selected>Normal (2–5 s)</option>
+            <option value="fast">Fast (1–3 s)</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="form-error" class="error-banner hidden"></div>
+
+      <div class="btn-row">
+        <button id="start-btn" class="btn btn-primary">Start Scraping</button>
+        <button id="stop-btn" class="btn btn-danger" disabled>Stop</button>
+        <button id="resume-btn" class="btn btn-resume hidden">↩ Resume</button>
+      </div>
+    </section>
+
+    <!-- Progress -->
+    <section id="progress-section" class="hidden">
+      <div id="status-bar">
+        <span id="status-icon" class="spin">⏳</span>
+        <span id="status-message">Initialising…</span>
+      </div>
+      <div class="stats-row">
+        <div class="stat">
+          <span id="stat-scanned" class="stat-value">0</span>
+          <span class="stat-label">Scanned</span>
+        </div>
+        <div class="stat">
+          <span id="stat-leads" class="stat-value">0</span>
+          <span class="stat-label">Leads Found</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Lead List -->
+    <section id="leads-section" class="hidden">
+      <div class="leads-header">
+        <h2>Leads <span id="leads-badge" class="badge">0</span></h2>
+        <button id="export-btn" class="btn btn-secondary" disabled>Export CSV</button>
+      </div>
+      <div id="leads-list"></div>
+    </section>
+
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

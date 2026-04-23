@@ -1,0 +1,250 @@
+/* ──────────────────────────────────────────────
+   igLeadFinder  –  Popup Styles
+   ────────────────────────────────────────────── */
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:         #ffffff;
+  --surface:    #f8f9fa;
+  --border:     #e1e4e8;
+  --text:       #1a1a2e;
+  --muted:      #6c757d;
+  --primary:    #e1306c;
+  --primary-dk: #c1215c;
+  --danger:     #dc3545;
+  --danger-dk:  #b02a37;
+  --secondary:  #0d6efd;
+  --success:    #198754;
+  --radius:     8px;
+  --shadow:     0 1px 3px rgba(0,0,0,.1);
+}
+
+body {
+  width: 420px;
+  min-height: 160px;
+  max-height: 620px;
+  overflow-y: auto;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: var(--surface); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* ── Header ── */
+header {
+  display: flex;
+  align-items: center;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, #833ab4, #fd1d1d, #fcb045);
+}
+
+.logo { display: flex; align-items: center; gap: 8px; }
+.logo-icon { font-size: 18px; }
+.logo-text {
+  font-size: 16px;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: -0.3px;
+}
+
+/* ── Sections ── */
+section { padding: 14px 16px; }
+section + section { border-top: 1px solid var(--border); }
+.hidden { display: none !important; }
+
+/* ── Form elements ── */
+.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+.field:last-child { margin-bottom: 0; }
+
+.field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+label {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+label .hint {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: #adb5bd;
+}
+
+input[type="text"],
+input[type="number"],
+select {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+  outline: none;
+  transition: border-color .15s;
+}
+
+input[type="text"]:focus,
+input[type="number"]:focus,
+select:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(225,48,108,.15); }
+
+/* ── Buttons ── */
+.btn {
+  padding: 7px 16px;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .15s, opacity .15s;
+}
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+
+.btn-primary  { background: var(--primary);   color: #fff; }
+.btn-primary:not(:disabled):hover  { background: var(--primary-dk); }
+
+.btn-resume   { background: var(--success);   color: #fff; }
+.btn-resume:not(:disabled):hover   { background: #146c43; }
+
+.btn-danger   { background: var(--danger);    color: #fff; }
+.btn-danger:not(:disabled):hover   { background: var(--danger-dk); }
+
+.btn-secondary { background: var(--secondary); color: #fff; }
+.btn-secondary:not(:disabled):hover { background: #0b5ed7; }
+
+.btn-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* ── Error banner ── */
+.error-banner {
+  background: #fff3cd;
+  border: 1px solid #ffc107;
+  color: #664d03;
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+
+/* ── Progress section ── */
+#status-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+#status-icon { font-size: 14px; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { display: inline-block; animation: spin 1.2s linear infinite; }
+
+.stats-row {
+  display: flex;
+  gap: 20px;
+}
+
+.stat { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.stat-value { font-size: 22px; font-weight: 700; color: var(--primary); }
+.stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; }
+
+/* ── Leads section ── */
+.leads-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.leads-header h2 {
+  font-size: 14px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.badge {
+  background: var(--primary);
+  color: #fff;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 7px;
+}
+
+/* Lead Card */
+.lead-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  margin-bottom: 6px;
+}
+
+.lead-card:last-child { margin-bottom: 0; }
+
+.lead-top {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+
+.lead-username {
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--primary);
+  text-decoration: none;
+}
+.lead-username:hover { text-decoration: underline; }
+
+.lead-fullname { font-size: 11.5px; color: var(--muted); }
+
+.lead-verified {
+  font-size: 11px;
+  background: #0d6efd;
+  color: #fff;
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
+.lead-bio {
+  font-size: 11.5px;
+  color: #495057;
+  margin-bottom: 4px;
+  word-break: break-word;
+  white-space: pre-wrap;
+  max-height: 48px;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.lead-meta {
+  font-size: 10.5px;
+  color: #adb5bd;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
