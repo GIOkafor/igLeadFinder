@@ -18,12 +18,36 @@
 
     <!-- Config Form -->
     <section id="config-section">
-      <div class="field">
+
+      <!-- Mode tabs -->
+      <div class="mode-tabs" role="tablist">
+        <button class="mode-tab active" id="tab-followers" role="tab" data-mode="followers">
+          👥 Followers
+        </button>
+        <button class="mode-tab" id="tab-commenters" role="tab" data-mode="commenters">
+          💬 Commenters
+        </button>
+      </div>
+
+      <!-- Followers mode input -->
+      <div id="field-username" class="field">
         <label for="target-username">Target Account</label>
         <input
           type="text"
           id="target-username"
           placeholder="username (no @)"
+          autocomplete="off"
+          spellcheck="false"
+        >
+      </div>
+
+      <!-- Commenters mode input -->
+      <div id="field-post-url" class="field hidden">
+        <label for="post-url">Post URL</label>
+        <input
+          type="url"
+          id="post-url"
+          placeholder="https://www.instagram.com/p/ABC123/"
           autocomplete="off"
           spellcheck="false"
         >

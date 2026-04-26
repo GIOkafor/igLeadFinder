@@ -5,11 +5,13 @@
  * Uses Instagram's own internal REST API—the exact same calls the
  * Instagram web app makes—so no third-party scraping library is needed.
  *
- * Flow triggered by background:
- *   1. RUN_SCRAPE  → resolve target account → paginate followers
- *                    → per-follower profile fetch (bio) → keyword filter
- *                    → send LEAD_FOUND for each match
- *   2. STOP_SCRAPE → set stop flag, exit gracefully
+ * Modes:
+ *   followers  → resolve target account → paginate followers
+ *               → per-follower profile fetch (bio) → keyword filter
+ *   commenters → resolve post shortcode → paginate comments
+ *               → per-commenter profile fetch (bio) → keyword filter
+ *
+ * STOP_SCRAPE → set stop flag, exit gracefully
  */
 
 // Guard against double-injection (SPA navigation + scripting.executeScript)
@@ -300,6 +302,360 @@ async function runScrape(config) {
 }
 
 // --------------------------------------------------------------------------
+// Commenter-mode API helpers
+// --------------------------------------------------------------------------
+
+/**
+ * Convert an Instagram shortcode to its numeric media ID.
+ *
+ * Instagram shortcodes are base64url-encoded big integers using the alphabet:
+ *   A-Z (0-25)  a-z (26-51)  0-9 (52-61)  - (62)  _ (63)
+ *
+ * This is a well-documented public algorithm (same one Instagram's own web
+ * app uses internally).  Converting locally means:
+ *   • Zero network requests for this step — one less API call to make
+ *   • No chance of a 404 or rate-limit before we even start
+ *   • Instant resolution, no async needed
+ *
+ * Example: 'DXb1QK9jRDK' → '3576109241987654321'
+ */
+function shortcodeToMediaId(shortcode) {
+  const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+  let id = BigInt(0);
+  for (const char of shortcode) {
+    const idx = ALPHABET.indexOf(char);
+    if (idx === -1) throw new Error(`Invalid shortcode character “${char}” — check the post URL.`);
+    id = id * BigInt(64) + BigInt(idx);
+  }
+  return id.toString();
+}
+
+/**
+ * Fetch one page of top-level comments for a media ID.
+ *
+ * Instagram has TWO pagination directions for comments:
+ *
+ *   Forward  (newer):  max_id    / has_more_comments
+ *   Headload (older):  min_id    / has_more_headload_comments
+ *
+ * With permalink_enabled=true + ranked mode (the default for posts), Instagram
+ * returns the top-ranked batch on the first call.  The REMAINING comments come
+ * back via the HEADLOAD direction (min_id / next_min_id), NOT max_id.
+ * has_more_comments will be false on the first page even though 37+ comments
+ * are still waiting behind has_more_headload_comments: true.
+ *
+ * filter param:
+ *   (omitted) = visible comments only
+ *   3         = hidden/spam-filtered comments
+ */
+async function fetchCommentsPage(mediaId, maxId, minId, filter) {
+  let url = `https://www.instagram.com/api/v1/media/${mediaId}/comments/?can_support_threading=true&permalink_enabled=true`;
+  if (maxId)  url += `&max_id=${encodeURIComponent(maxId)}`;
+  if (minId)  url += `&min_id=${encodeURIComponent(minId)}`;
+  if (filter) url += `&filter=${encodeURIComponent(filter)}`;
+
+  const res = await fetch(url, { headers: buildHeaders(), credentials: 'include' });
+
+  // console.log(`[igLeadFinder] fetchCommentsPage URL: ${url}`);
+  // console.log(`[igLeadFinder] fetchCommentsPage response body: ${await res.text()}`);
+
+  if (res.status === 429) throw Object.assign(new Error('RATE_LIMITED'), { isRateLimit: true });
+  if (res.status === 401) throw new Error('Instagram session expired. Please refresh the page.');
+  if (!res.ok) throw new Error(`Comments request failed (HTTP ${res.status}).`);
+
+  return res.json();
+}
+
+// --------------------------------------------------------------------------
+// Commenter scrape loop
+// --------------------------------------------------------------------------
+async function runCommentScrape(config) {
+  stopFlag = false;
+
+  const {
+    shortcode,
+    keywords    = [],
+    maxLeads    = 100,
+    delayProfile = 'normal',
+    resumeCursor  = null,
+    resumeScanned = 0,
+    resumeLeads   = 0,
+  } = config;
+
+  const delays = DELAY_PROFILES[delayProfile] ?? DELAY_PROFILES.normal;
+
+  // ── Step 1: resolve media ID (pure client-side, no API call) ─────────────────────
+  sendProgress(`Resolving post…`, 0, 0);
+  console.log(`[igLeadFinder] Decoding shortcode: ${shortcode}`);
+
+  let mediaId;
+  try {
+    mediaId = shortcodeToMediaId(shortcode);
+    console.log(`[igLeadFinder] Decoded mediaId: ${mediaId}`);
+  } catch (err) {
+    console.error('[igLeadFinder] shortcodeToMediaId failed:', err.message);
+    sendError(err.message);
+    return;
+  }
+
+  sendProgress(`Post resolved. Loading comments…`, 0, 0);
+
+  // ── Step 2: paginate comments ────────────────────────────────────────────
+  // Cursors: Instagram uses two pagination directions.
+  // We store them as a JSON object {maxId, minId}; legacy plain-string cursors
+  // (from earlier versions) are treated as max_id for backward compat.
+  let maxCursor = null;
+  let minCursor = null;
+  if (resumeCursor) {
+    try {
+      const parsed = JSON.parse(resumeCursor);
+      maxCursor = parsed.maxId ?? null;
+      minCursor = parsed.minId ?? null;
+    } catch {
+      maxCursor = resumeCursor; // legacy: plain string was always a max_id cursor
+    }
+  }
+
+  let totalScanned = resumeScanned;
+  let totalLeads   = resumeLeads;
+
+  if (resumeCursor) {
+    sendProgress(`Resuming from comment #${resumeScanned + 1}…`, totalScanned, totalLeads);
+  }
+
+  // Track commenter user IDs already processed on this run to avoid
+  // re-fetching profiles when someone comments multiple times on the same post.
+  const processedUserIds = new Set();
+
+  while (!stopFlag) {
+    if (totalLeads >= maxLeads) break;
+
+    console.log(`[igLeadFinder] Fetching comments page. maxCursor=${maxCursor ?? '-'} minCursor=${minCursor ? minCursor.slice(0, 40) + '…' : '-'}`);
+    sendProgress(`Loading comments page… · ${totalScanned} scanned · ${totalLeads} leads`, totalScanned, totalLeads);
+
+    let pageData;
+    try {
+      pageData = await fetchCommentsPage(mediaId, maxCursor, minCursor);
+      console.log('[igLeadFinder] Raw comments page:', JSON.stringify(pageData).slice(0, 400));
+    } catch (err) {
+      if (err.isRateLimit) {
+        sendProgress('Rate limited. Pausing 90 seconds…', totalScanned, totalLeads);
+        await pause(90_000);
+        continue;
+      }
+      console.error('[igLeadFinder] fetchCommentsPage error:', err.message);
+      sendError(err.message);
+      return;
+    }
+
+    const comments = pageData.comments ?? [];
+    console.log(`[igLeadFinder] Comments on page: ${comments.length}. has_more_comments: ${pageData.has_more_comments}. has_more_headload: ${pageData.has_more_headload_comments}. next_max_id: ${pageData.next_max_id ?? 'none'}. next_min_id: ${pageData.next_min_id ? '(present)' : 'none'}`);
+
+    if (comments.length === 0) {
+      sendProgress('No more comments found.', totalScanned, totalLeads);
+      break;
+    }
+
+    // Flatten top-level comments and their inline child replies into one list.
+    // Instagram nests the first ~3 replies inside comment.child_comments on the
+    // same response page — if we don't include them we silently miss those users.
+    // (Deep reply threads with more replies have their own pagination via a
+    // separate endpoint, but inline replies cover the vast majority of cases.)
+    const allCommenters = [];
+    for (const comment of comments) {
+      if (comment.user) allCommenters.push(comment.user);
+      for (const reply of (comment.child_comments ?? [])) {
+        if (reply.user) allCommenters.push(reply.user);
+      }
+    }
+    console.log(`[igLeadFinder] Unique commenters to process (top-level + replies): ${allCommenters.length}`);
+
+    // ── Step 3: per-commenter ─────────────────────────────────────────────
+    for (const commenter of allCommenters) {
+      if (stopFlag || totalLeads >= maxLeads) break;
+
+      // Skip users we already processed (multiple comments from same person)
+      if (processedUserIds.has(String(commenter.pk))) continue;
+      processedUserIds.add(String(commenter.pk));
+
+      totalScanned++;
+
+      console.log(`[igLeadFinder] [${totalScanned}] Checking @${commenter.username} (private: ${commenter.is_private})`);
+
+      // Fast-path: skip private accounts
+      if (commenter.is_private) {
+        sendProgress(`Skipped @${commenter.username} (private) · ${totalScanned} scanned · ${totalLeads} leads`, totalScanned, totalLeads);
+        await randomDelay(200, 500);
+        continue;
+      }
+
+      sendProgress(`Fetching bio for @${commenter.username}… · ${totalScanned} scanned · ${totalLeads} leads`, totalScanned, totalLeads);
+
+      let profile = null;
+      try {
+        await randomDelay(delays.min, delays.max);
+        profile = await fetchUserProfile(commenter.pk);
+      } catch (err) {
+        if (err.isRateLimit) {
+          sendProgress('Rate limited. Pausing 90 seconds…', totalScanned, totalLeads);
+          await pause(90_000);
+          try {
+            profile = await fetchUserProfile(commenter.pk);
+          } catch (_) {
+            console.warn(`[igLeadFinder] Skipping @${commenter.username} after retry.`);
+            continue;
+          }
+        } else {
+          console.warn(`[igLeadFinder] Profile fetch failed for @${commenter.username}:`, err.message);
+          continue;
+        }
+      }
+
+      if (!profile) {
+        console.warn(`[igLeadFinder] Null profile for @${commenter.username}`);
+        continue;
+      }
+
+      console.log(`[igLeadFinder] @${profile.username} bio: "${profile.biography}"`);
+
+      if (profile.is_private) continue;
+
+      const matched = matchesKeywords(profile.biography, keywords);
+      console.log(`[igLeadFinder] @${profile.username} keyword match: ${matched}`);
+      if (!matched) continue;
+
+      totalLeads++;
+
+      const lead = {
+        username:       profile.username,
+        fullName:       profile.full_name ?? '',
+        bio:            profile.biography ?? '',
+        followerCount:  profile.follower_count ?? null,
+        followingCount: profile.following_count ?? null,
+        postCount:      profile.media_count ?? null,
+        isVerified:     profile.is_verified ?? false,
+        profileUrl:     `https://www.instagram.com/${profile.username}/`,
+        scrapedAt:      new Date().toISOString(),
+      };
+
+      chrome.runtime.sendMessage({ action: 'LEAD_FOUND', lead });
+      sendProgress(
+        `Scanned ${totalScanned} commenters · ${totalLeads} leads found…`,
+        totalScanned,
+        totalLeads
+      );
+    }
+
+    // Advance to next page.  Instagram uses two independent pagination signals:
+    //   max_id  / has_more_comments         — forward direction (newer comments)
+    //   min_id  / has_more_headload_comments — headload direction (older/more ranked)
+    // With permalink_enabled=true the first page exhausts the forward direction
+    // immediately; all remaining comments come via headload (min_id).
+    maxCursor = pageData.next_max_id ?? null;
+    minCursor = pageData.next_min_id ?? null;
+    const hasMoreForward  = !!(pageData.has_more_comments          && maxCursor);
+    const hasMoreHeadload = !!(pageData.has_more_headload_comments && minCursor);
+
+    const cursorForStorage = (maxCursor || minCursor)
+      ? JSON.stringify({ maxId: maxCursor, minId: minCursor })
+      : null;
+    chrome.runtime.sendMessage({ action: 'CURSOR_UPDATE', cursor: cursorForStorage, totalScanned, totalLeads });
+
+    if (!hasMoreForward && !hasMoreHeadload) break;
+
+    await randomDelay(delays.pageMin, delays.pageMax);
+  }
+
+  // ── Hidden / spam-filtered comments pass ──────────────────────────────────
+  // Instagram hides certain comments (spam, offensive) behind filter=3.
+  // These are never returned by the standard endpoint regardless of pagination.
+  // We make a separate single-page request here to catch those users too.
+  if (!stopFlag && totalLeads < maxLeads) {
+    sendProgress(`Checking hidden/filtered comments… · ${totalScanned} scanned · ${totalLeads} leads`, totalScanned, totalLeads);
+    console.log('[igLeadFinder] Fetching hidden/filtered comments (filter=3)…');
+
+    await randomDelay(delays.pageMin, delays.pageMax);
+
+    try {
+      let hiddenMaxCursor = null;
+      let hiddenMinCursor = null;
+      // Hidden comments can also span multiple pages (both directions)
+      while (!stopFlag && totalLeads < maxLeads) {
+        const hiddenPage = await fetchCommentsPage(mediaId, hiddenMaxCursor, hiddenMinCursor, '3');
+        const hiddenComments = hiddenPage.comments ?? [];
+        console.log(`[igLeadFinder] Hidden comments on page: ${hiddenComments.length}. has_more_headload: ${hiddenPage.has_more_headload_comments}`);
+
+        if (hiddenComments.length === 0) break;
+
+        const hiddenCommenters = [];
+        for (const comment of hiddenComments) {
+          if (comment.user) hiddenCommenters.push(comment.user);
+          for (const reply of (comment.child_comments ?? [])) {
+            if (reply.user) hiddenCommenters.push(reply.user);
+          }
+        }
+
+        for (const commenter of hiddenCommenters) {
+          if (stopFlag || totalLeads >= maxLeads) break;
+          if (processedUserIds.has(String(commenter.pk))) continue;
+          processedUserIds.add(String(commenter.pk));
+
+          totalScanned++;
+
+          if (commenter.is_private) {
+            await randomDelay(200, 500);
+            continue;
+          }
+
+          sendProgress(`Checking hidden commenter @${commenter.username}… · ${totalScanned} scanned · ${totalLeads} leads`, totalScanned, totalLeads);
+          await randomDelay(delays.min, delays.max);
+
+          let profile = null;
+          try {
+            profile = await fetchUserProfile(commenter.pk);
+          } catch (err) {
+            if (err.isRateLimit) {
+              await pause(90_000);
+              try { profile = await fetchUserProfile(commenter.pk); } catch (_) { continue; }
+            } else { continue; }
+          }
+
+          if (!profile || profile.is_private) continue;
+          if (!matchesKeywords(profile.biography, keywords)) continue;
+
+          totalLeads++;
+          const lead = {
+            username:       profile.username,
+            fullName:       profile.full_name ?? '',
+            bio:            profile.biography ?? '',
+            followerCount:  profile.follower_count ?? null,
+            followingCount: profile.following_count ?? null,
+            postCount:      profile.media_count ?? null,
+            isVerified:     profile.is_verified ?? false,
+            profileUrl:     `https://www.instagram.com/${profile.username}/`,
+            scrapedAt:      new Date().toISOString(),
+          };
+          chrome.runtime.sendMessage({ action: 'LEAD_FOUND', lead });
+          sendProgress(`Scanned ${totalScanned} commenters · ${totalLeads} leads found…`, totalScanned, totalLeads);
+        }
+
+        hiddenMaxCursor = hiddenPage.next_max_id ?? null;
+        hiddenMinCursor = hiddenPage.next_min_id ?? null;
+        const hiddenHasMore = !!(hiddenPage.has_more_comments && hiddenMaxCursor) ||
+                              !!(hiddenPage.has_more_headload_comments && hiddenMinCursor);
+        if (!hiddenHasMore) break;
+        await randomDelay(delays.pageMin, delays.pageMax);
+      }
+    } catch (err) {
+      // Hidden comments are a best-effort pass — don’t abort the whole job
+      console.warn('[igLeadFinder] Hidden comments fetch failed (non-fatal):', err.message);
+    }
+  }
+
+  chrome.runtime.sendMessage({ action: 'SCRAPE_DONE', totalScanned, totalLeads });
+}
+
+// --------------------------------------------------------------------------
 // Message helpers
 // --------------------------------------------------------------------------
 function sendProgress(message, scanned, found) {
@@ -324,7 +680,12 @@ if (window.__igLeadFinderListener) {
 
 window.__igLeadFinderListener = function (message, _sender, sendResponse) {
   if (message.action === 'RUN_SCRAPE') {
-    runScrape(message.config);
+    const { config } = message;
+    if (config.mode === 'commenters') {
+      runCommentScrape(config);
+    } else {
+      runScrape(config);
+    }
     sendResponse({ started: true });
   } else if (message.action === 'STOP_SCRAPE') {
     stopFlag = true;
