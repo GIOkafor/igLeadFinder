@@ -59,10 +59,26 @@ function buildHeaders() {
   };
 }
 
+/**
+ * Resolve the biography text from a raw Instagram user profile object.
+ * Instagram returns the bio in one of two fields depending on the client version:
+ *   1. profile.biography            – plain string (older / mobile API)
+ *   2. profile.biography_with_entities.raw_text – newer API wrapper
+ * We try both so the keyword filter always has the real bio text.
+ */
+function getBio(profile) {
+  return profile.biography
+    || profile.biography_with_entities?.raw_text
+    || '';
+}
+
 function matchesKeywords(bio, keywords) {
   if (!keywords || keywords.length === 0) return true;
   const lowerBio = (bio || '').toLowerCase();
-  return keywords.some((kw) => lowerBio.includes(kw.toLowerCase().trim()));
+  return keywords.some((kw) => {
+    const term = kw.toLowerCase().trim();
+    return term.length > 0 && lowerBio.includes(term);
+  });
 }
 
 // --------------------------------------------------------------------------
@@ -248,7 +264,7 @@ async function runScrape(config) {
         continue;
       }
 
-      console.log(`[igLeadFinder] @${profile.username} bio: "${profile.biography}"`);
+      console.log(`[igLeadFinder] @${profile.username} bio: "${getBio(profile)}"`);
 
       // Double-check privacy on the full profile
       if (profile.is_private) {
@@ -257,7 +273,7 @@ async function runScrape(config) {
       }
 
       // Keyword filter
-      const matched = matchesKeywords(profile.biography, keywords);
+      const matched = matchesKeywords(getBio(profile), keywords);
       console.log(`[igLeadFinder] @${profile.username} keyword match: ${matched}`);
       if (!matched) continue;
 
@@ -266,7 +282,7 @@ async function runScrape(config) {
       const lead = {
         username: profile.username,
         fullName: profile.full_name ?? '',
-        bio: profile.biography ?? '',
+        bio: getBio(profile),
         followerCount: profile.follower_count ?? null,
         followingCount: profile.following_count ?? null,
         postCount: profile.media_count ?? null,
@@ -516,12 +532,13 @@ async function runCommentScrape(config) {
         continue;
       }
 
-      console.log(`[igLeadFinder] @${profile.username} bio: "${profile.biography}"`);
+      const bio = getBio(profile);
+      console.log(`[igLeadFinder] @${profile.username} bio: "${bio}"`);
 
       if (profile.is_private) continue;
 
-      const matched = matchesKeywords(profile.biography, keywords);
-      console.log(`[igLeadFinder] @${profile.username} keyword match: ${matched}`);
+      const matched = matchesKeywords(bio, keywords);
+      console.log(`[igLeadFinder] @${profile.username} keyword match: ${matched} (keywords: ${JSON.stringify(keywords)})`);
       if (!matched) continue;
 
       totalLeads++;
@@ -621,13 +638,13 @@ async function runCommentScrape(config) {
           }
 
           if (!profile || profile.is_private) continue;
-          if (!matchesKeywords(profile.biography, keywords)) continue;
+          if (!matchesKeywords(getBio(profile), keywords)) continue;
 
           totalLeads++;
           const lead = {
             username:       profile.username,
             fullName:       profile.full_name ?? '',
-            bio:            profile.biography ?? '',
+            bio:            getBio(profile),
             followerCount:  profile.follower_count ?? null,
             followingCount: profile.following_count ?? null,
             postCount:      profile.media_count ?? null,
