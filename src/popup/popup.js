@@ -88,6 +88,7 @@ modeTabs.forEach((tab) => {
     modeTabs.forEach((t) => t.classList.toggle('active', t === tab));
     fieldUsername.classList.toggle('hidden', activeMode === 'commenters');
     fieldPostUrl.classList.toggle('hidden', activeMode === 'followers');
+    fieldUsername.classList.toggle('hidden', activeMode !== 'followers');
     hideFormError();
   });
 });
@@ -111,10 +112,11 @@ startBtn.addEventListener('click', () => {
     if (!username) return showFormError('Please enter a target Instagram username.');
     config = { mode: 'followers', username, keywords, maxLeads, delayProfile };
   } else {
+    // handles both 'commenters' and 'likers'
     const postUrl = postUrlEl.value.trim();
     const shortcode = extractShortcode(postUrl);
     if (!shortcode) return showFormError('Please enter a valid Instagram post URL (e.g. https://www.instagram.com/p/ABC123/).');
-    config = { mode: 'commenters', postUrl, shortcode, keywords, maxLeads, delayProfile };
+    config = { mode: activeMode, postUrl, shortcode, keywords, maxLeads, delayProfile };
   }
 
   hideFormError();

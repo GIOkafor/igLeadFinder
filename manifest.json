@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "igLeadFinder",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Find and filter Instagram followers by bio keywords. Filters out private accounts.",
   "permissions": [
     "storage",

@@ -74,10 +74,22 @@ function getBio(profile) {
 
 function matchesKeywords(bio, keywords) {
   if (!keywords || keywords.length === 0) return true;
-  const lowerBio = (bio || '').toLowerCase();
+  const rawBio  = bio || '';
+  const lowerBio = rawBio.toLowerCase();
   return keywords.some((kw) => {
-    const term = kw.toLowerCase().trim();
-    return term.length > 0 && lowerBio.includes(term);
+    const raw  = kw.trim();
+    if (raw.length === 0) return false;
+    // Short all-caps acronyms (IT, AI, CS, QA): case-sensitive so the pronoun
+    // "it" or article "an" in ordinary prose never triggers a tech keyword.
+    const isAcronym = raw.length <= 3 && /^[A-Z0-9]+$/.test(raw);
+    const term      = isAcronym ? raw : raw.toLowerCase();
+    const haystack  = isAcronym ? rawBio : lowerBio;
+    if (/^[a-zA-Z0-9 -]+$/.test(raw)) {
+      const escaped = term.replace(/[-[\]{}()*+?.,\\^$|#]/g, '\\$&');
+      return new RegExp(`\\b${escaped}\\b`, isAcronym ? '' : 'i').test(haystack);
+    }
+    // Emoji / non-ASCII keywords (e.g. 💻) fall back to substring match.
+    return lowerBio.includes(raw.toLowerCase());
   });
 }
 
@@ -382,6 +394,22 @@ async function fetchCommentsPage(mediaId, maxId, minId, filter) {
   return res.json();
 }
 
+/**
+ * Get list of post likes
+*/
+async function fetchLikersPage(mediaId, cursor) {
+  let url = `https://www.instagram.com/api/v1/media/${mediaId}/likers/`;
+  if (cursor) url += `?max_id=${encodeURIComponent(cursor)}`;
+
+  const res = await fetch(url, { headers: buildHeaders(), credentials: 'include' });
+
+  if (res.status === 429) throw Object.assign(new Error('RATE_LIMITED'), { isRateLimit: true });
+  if (res.status === 401) throw new Error('Instagram session expired. Please refresh the page.');
+  if (!res.ok) throw new Error(`Likers request failed (HTTP ${res.status}).`);
+
+  return res.json();
+}
+
 // --------------------------------------------------------------------------
 // Commenter scrape loop
 // --------------------------------------------------------------------------
@@ -672,6 +700,136 @@ async function runCommentScrape(config) {
   chrome.runtime.sendMessage({ action: 'SCRAPE_DONE', totalScanned, totalLeads });
 }
 
+// get profile data on post likers and update UI
+async function runLikerScrape(config) {
+  stopFlag = false;
+
+  const {
+    shortcode,
+    keywords     = [],
+    maxLeads     = 100,
+    delayProfile = 'normal',
+    resumeCursor  = null,
+    resumeScanned = 0,
+    resumeLeads   = 0,
+  } = config;
+
+  const delays = DELAY_PROFILES[delayProfile] ?? DELAY_PROFILES.normal;
+
+  sendProgress(`Resolving post…`, 0, 0);
+
+  let mediaId;
+  try {
+    mediaId = shortcodeToMediaId(shortcode);
+  } catch (err) {
+    sendError(err.message);
+    return;
+  }
+
+  sendProgress(`Post resolved. Loading likers…`, 0, 0);
+
+  let cursor       = resumeCursor;
+  let totalScanned = resumeScanned;
+  let totalLeads   = resumeLeads;
+
+  if (resumeCursor) {
+    sendProgress(`Resuming from liker #${resumeScanned + 1}…`, totalScanned, totalLeads);
+  }
+
+  while (!stopFlag) {
+    if (totalLeads >= maxLeads) break;
+
+    sendProgress(`Loading likers page… · ${totalScanned} scanned · ${totalLeads} leads`, totalScanned, totalLeads);
+
+    let pageData;
+    try {
+      pageData = await fetchLikersPage(mediaId, cursor);
+      console.log('[igLeadFinder] Raw likers page:', JSON.stringify(pageData).slice(0, 400));
+    } catch (err) {
+      if (err.isRateLimit) {
+        sendProgress('Rate limited. Pausing 90 seconds…', totalScanned, totalLeads);
+        await pause(90_000);
+        continue;
+      }
+      sendError(err.message);
+      return;
+    }
+
+    const likers = pageData.users ?? [];
+    console.log(`[igLeadFinder] Likers on page: ${likers.length}. next_max_id: ${pageData.next_max_id ?? 'none'}`);
+
+    if (likers.length === 0) {
+      sendProgress('No likers returned.', totalScanned, totalLeads);
+      break;
+    }
+
+    for (const liker of likers) {
+      if (stopFlag || totalLeads >= maxLeads) break;
+
+      totalScanned++;
+
+      if (liker.is_private) {
+        sendProgress(`Skipped @${liker.username} (private) · ${totalScanned} scanned · ${totalLeads} leads`, totalScanned, totalLeads);
+        await randomDelay(200, 500);
+        continue;
+      }
+
+      sendProgress(`Fetching bio for @${liker.username}… · ${totalScanned} scanned · ${totalLeads} leads`, totalScanned, totalLeads);
+
+      let profile = null;
+      try {
+        await randomDelay(delays.min, delays.max);
+        profile = await fetchUserProfile(liker.pk);
+      } catch (err) {
+        if (err.isRateLimit) {
+          sendProgress('Rate limited. Pausing 90 seconds…', totalScanned, totalLeads);
+          await pause(90_000);
+          try {
+            profile = await fetchUserProfile(liker.pk);
+          } catch (_) {
+            console.warn(`[igLeadFinder] Skipping @${liker.username} after retry.`);
+            continue;
+          }
+        } else {
+          console.warn(`[igLeadFinder] Profile fetch failed for @${liker.username}:`, err.message);
+          continue;
+        }
+      }
+
+      if (!profile || profile.is_private) continue;
+
+      const bio = getBio(profile);
+      if (!matchesKeywords(bio, keywords)) continue;
+
+      totalLeads++;
+
+      const lead = {
+        username:       profile.username,
+        fullName:       profile.full_name ?? '',
+        bio,
+        followerCount:  profile.follower_count ?? null,
+        followingCount: profile.following_count ?? null,
+        postCount:      profile.media_count ?? null,
+        isVerified:     profile.is_verified ?? false,
+        profileUrl:     `https://www.instagram.com/${profile.username}/`,
+        scrapedAt:      new Date().toISOString(),
+      };
+
+      chrome.runtime.sendMessage({ action: 'LEAD_FOUND', lead });
+      sendProgress(`Scanned ${totalScanned} likers · ${totalLeads} leads found…`, totalScanned, totalLeads);
+    }
+
+    cursor = pageData.next_max_id ?? null;
+    chrome.runtime.sendMessage({ action: 'CURSOR_UPDATE', cursor, totalScanned, totalLeads });
+
+    if (!cursor) break;
+
+    await randomDelay(delays.pageMin, delays.pageMax);
+  }
+
+  chrome.runtime.sendMessage({ action: 'SCRAPE_DONE', totalScanned, totalLeads });
+}
+
 // --------------------------------------------------------------------------
 // Message helpers
 // --------------------------------------------------------------------------
@@ -700,6 +858,8 @@ window.__igLeadFinderListener = function (message, _sender, sendResponse) {
     const { config } = message;
     if (config.mode === 'commenters') {
       runCommentScrape(config);
+    } else if (config.mode === 'likers') {
+      runLikerScrape(config);
     } else {
       runScrape(config);
     }
