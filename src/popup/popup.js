@@ -197,11 +197,11 @@ function setIdleUI(msg) {
     // Stopped mid-run — show resume button if a cursor was saved
     statusIconEl.textContent = '⏹️';
     statusMessageEl.textContent = 'Stopped. You can resume where you left off.';
-    chrome.storage.local.get('job', ({ job }) => {
-      if (job?.cursor) {
-        resumeBtn.classList.remove('hidden');
-      }
-    });
+    if (msg?.cursor) {
+      resumeBtn.classList.remove('hidden');
+    } else {
+      resumeBtn.classList.add('hidden');
+    }
   }
 }
 

@@ -322,11 +322,9 @@ async function runScrape(config) {
     await randomDelay(delays.pageMin, delays.pageMax);
   }
 
-  chrome.runtime.sendMessage({
-    action: 'SCRAPE_DONE',
-    totalScanned,
-    totalLeads,
-  });
+  if (!stopFlag) {
+    chrome.runtime.sendMessage({ action: 'SCRAPE_DONE', totalScanned, totalLeads });
+  }
 }
 
 // --------------------------------------------------------------------------
@@ -697,7 +695,9 @@ async function runCommentScrape(config) {
     }
   }
 
-  chrome.runtime.sendMessage({ action: 'SCRAPE_DONE', totalScanned, totalLeads });
+  if (!stopFlag) {
+    chrome.runtime.sendMessage({ action: 'SCRAPE_DONE', totalScanned, totalLeads });
+  }
 }
 
 // get profile data on post likers and update UI
@@ -827,7 +827,9 @@ async function runLikerScrape(config) {
     await randomDelay(delays.pageMin, delays.pageMax);
   }
 
-  chrome.runtime.sendMessage({ action: 'SCRAPE_DONE', totalScanned, totalLeads });
+  if (!stopFlag) {
+    chrome.runtime.sendMessage({ action: 'SCRAPE_DONE', totalScanned, totalLeads });
+  }
 }
 
 // --------------------------------------------------------------------------
@@ -842,7 +844,18 @@ function sendError(error) {
 }
 
 function pause(ms) {
-  return new Promise((r) => setTimeout(r, ms));
+  // Resolves early if stopFlag is set, so Stop works during rate-limit waits
+  return new Promise((resolve) => {
+    const step = 250;
+    let elapsed = 0;
+    const timer = setInterval(() => {
+      elapsed += step;
+      if (stopFlag || elapsed >= ms) {
+        clearInterval(timer);
+        resolve();
+      }
+    }, step);
+  });
 }
 
 // --------------------------------------------------------------------------

@@ -169,7 +169,9 @@ async function handleStopScrape() {
     tabs.map((t) => chrome.tabs.sendMessage(t.id, { action: 'STOP_SCRAPE' }))
   );
 
-  notifyPopup({ action: 'SCRAPE_STOPPED' });
+  // Include cursor so popup can show/hide Resume without a second storage read
+  const { job } = await chrome.storage.local.get('job');
+  notifyPopup({ action: 'SCRAPE_STOPPED', cursor: job?.cursor ?? null });
 }
 
 // Serialise all lead storage writes to prevent concurrent read-modify-write races.
