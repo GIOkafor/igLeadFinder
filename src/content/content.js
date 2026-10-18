@@ -59,6 +59,18 @@ function buildHeaders() {
   };
 }
 
+function createRateLimitError(response) {
+  return Object.assign(new Error('Instagram returned HTTP 429.'), {
+    isRateLimit: true,
+    retryAfter: response.headers.get('Retry-After'),
+  });
+}
+
+function getRateLimitMessage(error) {
+  const retryAfter = error.retryAfter ? ` Retry-After: ${error.retryAfter}.` : '';
+  return `Instagram rate-limited this request (HTTP 429). Scraping stopped to avoid repeated requests. Wait before trying again; if this persists, Instagram may be limiting the extension's API access.${retryAfter}`;
+}
+
 /**
  * Resolve the biography text from a raw Instagram user profile object.
  * Instagram returns the bio in one of two fields depending on the client version:
@@ -102,6 +114,7 @@ async function fetchUserInfo(username) {
   const url = `https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`;
   const res = await fetch(url, { headers: buildHeaders(), credentials: 'include' });
 
+  if (res.status === 429) throw createRateLimitError(res);
   if (res.status === 404) throw new Error(`Account "@${username}" not found.`);
   if (res.status === 401) throw new Error('Not logged in to Instagram. Please log in and try again.');
   if (!res.ok) throw new Error(`Failed to fetch profile (HTTP ${res.status}).`);
@@ -125,7 +138,7 @@ async function fetchFollowersPage(userId, cursor) {
 
   const res = await fetch(url, { headers: buildHeaders(), credentials: 'include' });
 
-  if (res.status === 429) throw Object.assign(new Error('RATE_LIMITED'), { isRateLimit: true });
+  if (res.status === 429) throw createRateLimitError(res);
   if (res.status === 401) throw new Error('Instagram session expired. Please refresh the page.');
   if (!res.ok) throw new Error(`Followers request failed (HTTP ${res.status}).`);
 
@@ -136,7 +149,7 @@ async function fetchUserProfile(userId) {
   const url = `https://www.instagram.com/api/v1/users/${userId}/info/`;
   const res = await fetch(url, { headers: buildHeaders(), credentials: 'include' });
 
-  if (res.status === 429) throw Object.assign(new Error('RATE_LIMITED'), { isRateLimit: true });
+  if (res.status === 429) throw createRateLimitError(res);
   if (!res.ok) return null;
 
   const json = await res.json();
@@ -171,7 +184,7 @@ async function runScrape(config) {
     console.log('[igLeadFinder] fetchUserInfo result:', JSON.stringify(targetUser));
   } catch (err) {
     console.error('[igLeadFinder] fetchUserInfo failed:', err.message);
-    sendError(err.message);
+    sendError(err.isRateLimit ? getRateLimitMessage(err) : err.message);
     return;
   }
 
@@ -214,9 +227,8 @@ async function runScrape(config) {
       console.log('[igLeadFinder] Raw followers page response:', JSON.stringify(pageData).slice(0, 400));
     } catch (err) {
       if (err.isRateLimit) {
-        sendProgress('Rate limited by Instagram. Pausing 90 seconds…', totalScanned, totalLeads);
-        await pause(90_000);
-        continue;
+        sendError(getRateLimitMessage(err));
+        return;
       }
       console.error('[igLeadFinder] fetchFollowersPage error:', err.message);
       sendError(err.message);
@@ -256,15 +268,8 @@ async function runScrape(config) {
         profile = await fetchUserProfile(follower.pk);
       } catch (err) {
         if (err.isRateLimit) {
-          sendProgress('Rate limited. Pausing 90 seconds…', totalScanned, totalLeads);
-          await pause(90_000);
-          // Re-try this follower
-          try {
-            profile = await fetchUserProfile(follower.pk);
-          } catch (_) {
-            console.warn(`[igLeadFinder] Skipping @${follower.username} after rate-limit retry failed.`);
-            continue;
-          }
+          sendError(getRateLimitMessage(err));
+          return;
         } else {
           console.warn(`[igLeadFinder] Profile fetch failed for @${follower.username}:`, err.message);
           continue;
@@ -385,7 +390,7 @@ async function fetchCommentsPage(mediaId, maxId, minId, filter) {
   // console.log(`[igLeadFinder] fetchCommentsPage URL: ${url}`);
   // console.log(`[igLeadFinder] fetchCommentsPage response body: ${await res.text()}`);
 
-  if (res.status === 429) throw Object.assign(new Error('RATE_LIMITED'), { isRateLimit: true });
+  if (res.status === 429) throw createRateLimitError(res);
   if (res.status === 401) throw new Error('Instagram session expired. Please refresh the page.');
   if (!res.ok) throw new Error(`Comments request failed (HTTP ${res.status}).`);
 
@@ -401,7 +406,7 @@ async function fetchLikersPage(mediaId, cursor) {
 
   const res = await fetch(url, { headers: buildHeaders(), credentials: 'include' });
 
-  if (res.status === 429) throw Object.assign(new Error('RATE_LIMITED'), { isRateLimit: true });
+  if (res.status === 429) throw createRateLimitError(res);
   if (res.status === 401) throw new Error('Instagram session expired. Please refresh the page.');
   if (!res.ok) throw new Error(`Likers request failed (HTTP ${res.status}).`);
 
@@ -481,9 +486,8 @@ async function runCommentScrape(config) {
       console.log('[igLeadFinder] Raw comments page:', JSON.stringify(pageData).slice(0, 400));
     } catch (err) {
       if (err.isRateLimit) {
-        sendProgress('Rate limited. Pausing 90 seconds…', totalScanned, totalLeads);
-        await pause(90_000);
-        continue;
+        sendError(getRateLimitMessage(err));
+        return;
       }
       console.error('[igLeadFinder] fetchCommentsPage error:', err.message);
       sendError(err.message);
@@ -505,15 +509,15 @@ async function runCommentScrape(config) {
     // separate endpoint, but inline replies cover the vast majority of cases.)
     const allCommenters = [];
     for (const comment of comments) {
-      if (comment.user) allCommenters.push(comment.user);
+      if (comment.user) allCommenters.push({ user: comment.user, commentText: comment.text ?? '' });
       for (const reply of (comment.child_comments ?? [])) {
-        if (reply.user) allCommenters.push(reply.user);
+        if (reply.user) allCommenters.push({ user: reply.user, commentText: reply.text ?? '' });
       }
     }
     console.log(`[igLeadFinder] Unique commenters to process (top-level + replies): ${allCommenters.length}`);
 
     // ── Step 3: per-commenter ─────────────────────────────────────────────
-    for (const commenter of allCommenters) {
+    for (const { user: commenter, commentText } of allCommenters) {
       if (stopFlag || totalLeads >= maxLeads) break;
 
       // Skip users we already processed (multiple comments from same person)
@@ -539,14 +543,8 @@ async function runCommentScrape(config) {
         profile = await fetchUserProfile(commenter.pk);
       } catch (err) {
         if (err.isRateLimit) {
-          sendProgress('Rate limited. Pausing 90 seconds…', totalScanned, totalLeads);
-          await pause(90_000);
-          try {
-            profile = await fetchUserProfile(commenter.pk);
-          } catch (_) {
-            console.warn(`[igLeadFinder] Skipping @${commenter.username} after retry.`);
-            continue;
-          }
+          sendError(getRateLimitMessage(err));
+          return;
         } else {
           console.warn(`[igLeadFinder] Profile fetch failed for @${commenter.username}:`, err.message);
           continue;
@@ -579,6 +577,7 @@ async function runCommentScrape(config) {
         isVerified:     profile.is_verified ?? false,
         profileUrl:     `https://www.instagram.com/${profile.username}/`,
         scrapedAt:      new Date().toISOString(),
+        commentText:    commentText,
       };
 
       chrome.runtime.sendMessage({ action: 'LEAD_FOUND', lead });
@@ -632,13 +631,13 @@ async function runCommentScrape(config) {
 
         const hiddenCommenters = [];
         for (const comment of hiddenComments) {
-          if (comment.user) hiddenCommenters.push(comment.user);
+          if (comment.user) hiddenCommenters.push({ user: comment.user, commentText: comment.text ?? '' });
           for (const reply of (comment.child_comments ?? [])) {
-            if (reply.user) hiddenCommenters.push(reply.user);
+            if (reply.user) hiddenCommenters.push({ user: reply.user, commentText: reply.text ?? '' });
           }
         }
 
-        for (const commenter of hiddenCommenters) {
+        for (const { user: commenter, commentText } of hiddenCommenters) {
           if (stopFlag || totalLeads >= maxLeads) break;
           if (processedUserIds.has(String(commenter.pk))) continue;
           processedUserIds.add(String(commenter.pk));
@@ -658,8 +657,8 @@ async function runCommentScrape(config) {
             profile = await fetchUserProfile(commenter.pk);
           } catch (err) {
             if (err.isRateLimit) {
-              await pause(90_000);
-              try { profile = await fetchUserProfile(commenter.pk); } catch (_) { continue; }
+              sendError(getRateLimitMessage(err));
+              return;
             } else { continue; }
           }
 
@@ -677,6 +676,7 @@ async function runCommentScrape(config) {
             isVerified:     profile.is_verified ?? false,
             profileUrl:     `https://www.instagram.com/${profile.username}/`,
             scrapedAt:      new Date().toISOString(),
+            commentText:    commentText,
           };
           chrome.runtime.sendMessage({ action: 'LEAD_FOUND', lead });
           sendProgress(`Scanned ${totalScanned} commenters · ${totalLeads} leads found…`, totalScanned, totalLeads);
@@ -747,9 +747,8 @@ async function runLikerScrape(config) {
       console.log('[igLeadFinder] Raw likers page:', JSON.stringify(pageData).slice(0, 400));
     } catch (err) {
       if (err.isRateLimit) {
-        sendProgress('Rate limited. Pausing 90 seconds…', totalScanned, totalLeads);
-        await pause(90_000);
-        continue;
+        sendError(getRateLimitMessage(err));
+        return;
       }
       sendError(err.message);
       return;
@@ -782,14 +781,8 @@ async function runLikerScrape(config) {
         profile = await fetchUserProfile(liker.pk);
       } catch (err) {
         if (err.isRateLimit) {
-          sendProgress('Rate limited. Pausing 90 seconds…', totalScanned, totalLeads);
-          await pause(90_000);
-          try {
-            profile = await fetchUserProfile(liker.pk);
-          } catch (_) {
-            console.warn(`[igLeadFinder] Skipping @${liker.username} after retry.`);
-            continue;
-          }
+          sendError(getRateLimitMessage(err));
+          return;
         } else {
           console.warn(`[igLeadFinder] Profile fetch failed for @${liker.username}:`, err.message);
           continue;
@@ -841,21 +834,6 @@ function sendProgress(message, scanned, found) {
 
 function sendError(error) {
   chrome.runtime.sendMessage({ action: 'SCRAPE_ERROR', error });
-}
-
-function pause(ms) {
-  // Resolves early if stopFlag is set, so Stop works during rate-limit waits
-  return new Promise((resolve) => {
-    const step = 250;
-    let elapsed = 0;
-    const timer = setInterval(() => {
-      elapsed += step;
-      if (stopFlag || elapsed >= ms) {
-        clearInterval(timer);
-        resolve();
-      }
-    }, step);
-  });
 }
 
 // --------------------------------------------------------------------------

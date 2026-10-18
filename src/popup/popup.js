@@ -259,8 +259,9 @@ function buildLeadCard(lead) {
   const followers  = lead.followerCount != null ? `${lead.followerCount.toLocaleString()} followers` : '';
   const posts      = lead.postCount     != null ? `${lead.postCount.toLocaleString()} posts`       : '';
   const verified   = lead.isVerified    ? '<span class="lead-verified">✓</span>' : '';
-  const bioText    = escapeHtml(lead.bio || '');
-  const nameText   = escapeHtml(lead.fullName || '');
+  const bioText     = escapeHtml(lead.bio || '');
+  const nameText    = escapeHtml(lead.fullName || '');
+  const commentText = escapeHtml(lead.commentText || '');
 
   card.innerHTML = `
     <div class="lead-top">
@@ -268,7 +269,8 @@ function buildLeadCard(lead) {
       ${verified}
       ${nameText ? `<span class="lead-fullname">${nameText}</span>` : ''}
     </div>
-    ${bioText ? `<div class="lead-bio">${bioText}</div>` : ''}
+    ${bioText     ? `<div class="lead-bio">${bioText}</div>`         : ''}
+    ${commentText ? `<div class="lead-comment">"${commentText}"</div>` : ''}
     <div class="lead-meta">
       ${followers ? `<span>${followers}</span>` : ''}
       ${posts     ? `<span>${posts}</span>`     : ''}
@@ -301,7 +303,7 @@ async function exportCsv() {
 
   if (allLeads.length === 0) return;
 
-  const columns = ['username', 'fullName', 'bio', 'followerCount', 'followingCount', 'postCount', 'isVerified', 'profileUrl', 'scrapedAt'];
+  const columns = ['username', 'fullName', 'bio', 'followerCount', 'followingCount', 'postCount', 'isVerified', 'profileUrl', 'scrapedAt', 'commentText'];
   const header  = columns.join(',');
 
   const rows = allLeads.map((lead) =>
